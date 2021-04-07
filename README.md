@@ -9,7 +9,7 @@ In Feb. 2021, Microsoft released a patch for a vulnerability in win32kfull.sys, 
   }
 ```
   
-This simply calls MicrosoftTelemetryAssertTriggeredNoArgsKM if the NtUserConsoleControl is not being called from CSRSS.exe ("gpepCSRSS_exref" is the EPROCESS of CSRSS), since it's really intended to be for system use. However this isn't "actually" an assert; it just notifies Windows telemetry that a telemtry assertion failed so it can collect some info. Let's look at why this is significant, though.
+This simply calls MicrosoftTelemetryAssertTriggeredNoArgsKM if the NtUserConsoleControl is not being called from CSRSS.exe ("gpepCSRSS_exref" is the EPROCESS of CSRSS), since it's really intended to be for system use. However this isn't "actually" an assert; it just notifies Windows telemetry that a telemetry assertion failed so it can collect some info. Let's look at why this is significant, though.
 
 NtUserConsoleControl calls xxxConsoleControl which will change the pointer to the allocated client extra bytes, at \*(pWnd + 0x28) + 0x128, to an offset:
 
