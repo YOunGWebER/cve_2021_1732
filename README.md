@@ -1,6 +1,6 @@
 # cve_2021_1732
 
-In Feb. 2021, Microsoft released a patch for a vulnerability in win32kfull.sys, designated CVE-2021-1732, which concerns the handling of window class extra bytes. To briefly recall the history of win32 exploits, there were a long string of publicly-disclosed vulns in the 2010's that followed a similar pattern, described in Tarjei Mandt's paper on win32 callbacks[1]: an attacker overwrites some function pointer in the KernelCallbackTable with a pointer to an attacker-designed callback, triggers the callback (ie by window creation, destruction, message-handling, etc), then leverages its behavior to corrupt the class attributes of a window or other desktop object. Since then, MS has mitigated some of these scenarios and introduced some separation of concern by changing the cbWndExtra/cbWndExtraSize members of the window class struct; now there are separate memory handles (and associated size member) for client and server window extra bytes. A bit in the window state flags, bServerSideWindowProc, indicates which one should be used. This change, however, introduced a lot of new code complexity (ie more vulns); and allocating the client window extra bytes requires a call to user-mode RtlAllocateHeap, which introduces the opportunity for more callback shenanigans. The "Smash the Ref" paper is a really good overview of how this can be used to mess with reference counting in a lot of fun ways[2]. But there are plenty of other possibilities and this vuln presents one of them. This patch made changes to several functions in win32kfull (xxxEventWndProc, xxxSetWindowLongPtr, xxxSetWindowLong, NtUserSetWindowFNID) to add new telemetry or make the extra bytes handling more, robust. But there are two particular functions which are immediately relevant to this exploit. First, there was a change to NtUserConsoleControl, where this code is inserted:
+In Feb. 2021, Microsoft released a patch for a vulnerability in win32kfull.sys, designated CVE-2021-1732, which concerns the handling of window class extra bytes. To briefly recall the history of win32 exploits, there were a long string of publicly-disclosed vulns in the 2000's that followed a similar pattern, described in Tarjei Mandt's paper on win32 callbacks[1]: an attacker overwrites some function pointer in the KernelCallbackTable with a pointer to an attacker-designed callback, triggers the callback (ie by window creation, destruction, message-handling, etc), then leverages its behavior to corrupt the class attributes of a window or other desktop object. Since then, MS has mitigated some of these scenarios and introduced some separation of concern by changing the cbWndExtra/cbWndExtraSize members of the window class struct; now there are separate memory handles (and associated size member) for client and server window extra bytes. A bit in the window state flags, bServerSideWindowProc, indicates which one should be used. This change, however, introduced a lot of new code complexity (ie more vulns); and allocating the client window extra bytes requires a call to user-mode RtlAllocateHeap, which introduces the opportunity for more callback shenanigans. The "Smash the Ref" paper is a really good overview of how this can be used to mess with reference counting in a lot of fun ways[2]. But there are plenty of other possibilities and this vuln presents one of them. This patch made changes to several functions in win32kfull (xxxEventWndProc, xxxSetWindowLongPtr, xxxSetWindowLong, NtUserSetWindowFNID) to add new telemetry or make the extra bytes handling more, robust. But there are two particular functions which are immediately relevant to this exploit. First, there was a change to NtUserConsoleControl, where this code is inserted:
 
 ```
   lVar1 = PsGetCurrentProcess();
@@ -11,7 +11,7 @@ In Feb. 2021, Microsoft released a patch for a vulnerability in win32kfull.sys, 
   
 This simply calls MicrosoftTelemetryAssertTriggeredNoArgsKM if the NtUserConsoleControl is not being called from CSRSS.exe ("gpepCSRSS_exref" is the EPROCESS of CSRSS), since it's really intended to be for system use. However this isn't "actually" an assert; it just notifies Windows telemetry that a telemtry assertion failed so it can collect some info. Let's look at why this is significant, though.
 
-NtUserConsoleControl calls xxxConsoleControl which will change the pointer to the allocated client extra bytes, at *(pWnd + 0x28) + 0x128, to an offset:
+NtUserConsoleControl calls xxxConsoleControl which will change the pointer to the allocated client extra bytes, at \*(pWnd + 0x28) + 0x128, to an offset:
 
 ```
     if (*(longlong *)(*tagWND + 0x128) != 0) {
@@ -37,15 +37,15 @@ To explain further, when a window is created, xxxCreateWindowEx issues a user-mo
 There is this section in xxxCreateWindowEx, where cbWndServerExtra and cbWndClientExtra are filled based on the CLS structure attributes:
 
 ```
-*(uint *)(pWnd->WW + 0x1c) = Style & 0xefffffff;
-*(uint *)(pWnd->WW + 0x18) = ExStyle & 0xfdf7ffff;
+*(uint *)(pWnd->tagWND + 0x1c) = Style & 0xefffffff;
+*(uint *)(pWnd->tagWND + 0x18) = ExStyle & 0xfdf7ffff;
 //cbWndClientExtraSize
-*(long *)(pWnd->WW + 0xc8) = *(long *)(*(longlong *)(*pCLS + 8) + 0x50);
+*(long *)(pWnd->tagWND + 0xc8) = *(long *)(*(longlong *)(*pCLS + 8) + 0x50);
 //cbWndServerExtraSize
-*(long *)(pWnd->WW + 0xfc) = *(long *)(*(longlong *)(*pCLS + 8) + 0x54);
+*(long *)(pWnd->tagWND + 0xfc) = *(long *)(*(longlong *)(*pCLS + 8) + 0x54);
 ```
 
-Then later, in this loop, some space is allocated in user-mode for the class extra bytes, but only if the value which was previously copied to pWnd->WW+0xfc is equal to 0; then, the return value of xxxClientAllocWindowClassExtraBytes(), is placed at *(pWnd + 0x28) + 0x128:
+Then later, in this loop, some space is allocated in user-mode for the class extra bytes, but only if the value which was previously copied to pWnd->tagWND+0xfc is equal to 0; then, the return value of xxxClientAllocWindowClassExtraBytes(), is placed at \*(pWnd + 0x28) + 0x128:
 
 ```
 //if tagCLS->cbWndServerExtraSize == 0
@@ -71,7 +71,7 @@ Further, xxxConsoleControl will change the heap handle at \*(pWnd + 0x28) + 0x12
 *(uint *)(*tagWND + 0xe8) = *(uint *)(*tagWND + 0xe8) | 0x800;
 ```
 
-An attacker can patch the KernelCallbackTable entry for xxxClientAllocWindowClassExtraBytes with a function that calls NtUserConsoleControl to set the pointer to cbWndClientExtra at \*(pWnd + 0x28)+0x128 to an offset, and then NtCallbackReturn with an arbitrary value. xxxCreateWindowEx will overwrite the previous offset at \*(pWnd+0x28)+0x128 by NtUserConsoleControl with the value returned from NtCallbackReturn. However, the flag at \*(pWnd+0x28)+0xe8 remains set and \*(pWnd+0x28)+0x128 is later presumed to still be a valid offset after the window is finished creating; if you change the offset to the offset of another window from the start of the desktop heap (the address of the wnd handle can be obtained by calling HMValidateHandle), you can overwrite that window's system-reserved bytes, leading to a nice arbitrary read/write primative. Here's how this was fixed in the February patch update, in xxxCreateWindowEx:
+An attacker can patch the KernelCallbackTable entry for \_\_\_xxxClientAllocWindowClassExtraBytes with a function that calls NtUserConsoleControl to set the pointer to cbWndClientExtra at \*(pWnd + 0x28)+0x128 to an offset, and then NtCallbackReturn with an arbitrary value. xxxCreateWindowEx will overwrite the previous offset at \*(pWnd+0x28)+0x128 by NtUserConsoleControl with the value returned from NtCallbackReturn. However, the flag at \*(pWnd+0x28)+0xe8 remains set and \*(pWnd+0x28)+0x128 is later presumed to still be a valid offset after the window is finished creating; if you change the offset to the offset of another window from the start of the desktop heap (the address of the wnd handle can be obtained by calling HMValidateHandle), you can overwrite that window's system-reserved bytes, leading to a nice arbitrary read/write primative. Here's how this was fixed in the February patch update, in xxxCreateWindowEx:
 
 ```
 pExtraBytes = xxxClientAllocWindowClassExtraBytes();
@@ -80,7 +80,7 @@ if ((*(uint *)(tagWND + 0xe8) & 0x800) != 0) {
   //tagWND+0xe8 now zeroed out
   tagWND = savedtagWND;
 }
-*(longlong *)(_Var17 + 0x128) = pExtraBytes;
+*(longlong *)(tagWND + 0x128) = pExtraBytes;
 ```
 
 If xxxClientAllocWindowClassExtraBytes doesn't return a valid user-mode heap handle (ie because the callback was tampered with), and the flag indicating that it's an offset is unset, window creation will fail further down the line, so this fixes the issue. But anyway, there were already two good writeups on this with lots of nice visualizations[3][4] so I won't bore any further :p
