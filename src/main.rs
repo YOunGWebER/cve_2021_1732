@@ -224,7 +224,7 @@ fn main() {
     };
 }
 
-//boilerplate FFI stuff
+//boilerplate FFI stuff and resolve user32/win32u imports
 unsafe fn init_ntfunctions() {
     let u32str = b"user32.dll\0";
     let ntdllstr = b"ntdll\0";
