@@ -38,10 +38,7 @@ lazy_static!(
     static ref CALLBACKSTATE : RwLock<u8> = RwLock::new(0);
 );
 
-//this is slightly annoying. by default RECT is defined as having signed ints 
-//which is not what we want, since we're passing addresses. and also there's not
-//a good default way to convert from signed int without discarding rhs bits, so
-//I'll just define my own RECT type
+//this is slightly annoying
 #[repr(C)]
 pub struct RECT {
     pub left: u32,
